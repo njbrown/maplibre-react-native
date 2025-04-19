@@ -43,5 +43,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         ios: {},
       } as MapLibrePluginProps,
     ],
+    [
+      "expo-location",
+      {
+        locationAlwaysAndWhenInUsePermission:
+          "Allow $(PRODUCT_NAME) to use your location.",
+      },
+    ],
   ],
 });

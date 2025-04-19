@@ -1,11 +1,387 @@
-import { MapView } from "@maplibre/maplibre-react-native";
+import {
+  Camera,
+  CircleLayer,
+  LineLayer,
+  MapView,
+  RasterLayer,
+  RasterSource,
+  ShapeSource,
+  SymbolLayer,
+  UserLocation,
+  UserTrackingMode,
+  type CameraRef,
+} from "@maplibre/maplibre-react-native";
+import type { Position } from "geojson";
+import { useEffect, useRef, useState } from "react";
+import { Text, Pressable, View } from "react-native";
+import * as Location from "expo-location";
+import axios from "axios";
+import polyLib from "@mapbox/polyline";
 
 export function BugReport() {
+  const camRef = useRef<CameraRef | null>(null);
+  const [followUserLocation, setFollowUserLocation] = useState(true);
+  const [routePolygon, setRoutePolygon] = useState<any>(null);
+  const [destination, setDestinationPoint] = useState<Position | null>(null);
+  const [location, setLocation] = useState<any>();
+
+  useEffect(() => {
+    // use two known locations here
+    const start = [];
+    // const stop = [];
+  }, []);
+
+  const fetchNavigationRoute = async () => {
+    try {
+      // const start = await getCurrentLocation();try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        console.log("Permission to access location was denied");
+        return;
+      }
+
+      // const position = await Location.getCurrentPositionAsync({
+      //   accuracy: Location.Accuracy.BestForNavigation,
+      // });
+      const position = await Location.getLastKnownPositionAsync();
+      if (position && destination) {
+        // camRef.current?.setCamera({
+        //   centerCoordinate: [
+        //     position.coords.longitude,
+        //     position.coords.latitude,
+        //   ],
+        //   zoomLevel: 18,
+        //   animationDuration: 500,
+        // });
+        // fetch navigation from ferrostar
+        console.log(position);
+        const userLocation = [
+          position.coords.longitude,
+          position.coords.latitude,
+        ] satisfies [number, number];
+        console.log("FETCHING ROUTE");
+        const res = await getRouteFor(userLocation, destination!, "auto");
+
+        const route = res.routes[0];
+        // console.log(JSON.stringify(route, null, '  '));
+        const geom = route.geometry;
+        if (!geom) return;
+
+        // console.log(geom);
+        const decoded = polyLib.decode(geom).map<[number, number]>((x) => {
+          return [x[0] / 10, x[1] / 10];
+        });
+
+        // show on map
+        const LineString = {
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "LineString",
+            coordinates: decoded.map((x) => [x[1], x[0]]),
+          },
+        } satisfies GeoJSON.Feature;
+        setRoutePolygon(LineString);
+
+        // zoom to location
+        fitFeatureBounds(LineString, camRef.current!);
+      }
+    } catch (error) {
+      console.error("Error getting location:", error);
+    }
+  };
+
   return (
-    <MapView style={{ flex: 1 }}>
-      {/*
-         Reproduce your Bug here
-      */}
-    </MapView>
+    <View style={{ flex: 1, position: "relative" }}>
+      <MapView
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          zIndex: 0,
+        }}
+        onLongPress={(event) => {
+          // Get coordinates from the long press event
+          const { coordinates } = event.geometry;
+          console.log("Map long pressed at:", coordinates);
+
+          setDestinationPoint(coordinates);
+
+          // camRef.current?.fitBounds(
+          //   [coordinates[0] - 0.01, coordinates[1] - 0.01],
+          //   [coordinates[0] + 0.01, coordinates[1] + 0.01],
+          //   [100, 100, 100, 100], // top, right, bottom, left
+          //   500 // duration in ms, 0 for immediate
+          // );
+
+          // fit bounds to the coordinates
+
+          // fitFeatureBounds(camRef.current!, [location, coordinates]);
+        }}
+      >
+        <RasterSource
+          id="basemap"
+          tileUrlTemplates={[
+            "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+            "https://mt2.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+            "https://mt3.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+          ]}
+          tileSize={256}
+          minZoomLevel={0}
+          maxZoomLevel={24}
+        >
+          <RasterLayer
+            id="basemap"
+            // style={{
+            //   visibility: showSatelliteLayer ? 'visible' : 'none',
+            // }}
+          />
+        </RasterSource>
+        <Camera
+          ref={camRef}
+          followUserLocation={followUserLocation}
+          // followUserMode={UserTrackingMode.Follow}
+          onUserTrackingModeChange={(event) => {
+            console.log(JSON.stringify(event.nativeEvent.payload));
+
+            if (!event.nativeEvent.payload.followUserLocation) {
+              setFollowUserLocation(false);
+            }
+          }}
+        />
+        <UserLocation renderMode="native" />
+
+        {routePolygon && (
+          <>
+            <ShapeSource
+              // key={'source' + updateKey}
+              id="route-source"
+              shape={routePolygon}
+            >
+              <LineLayer
+                // sourceID={'route-source'}
+                id="route-layer-bg"
+                style={{
+                  lineColor: "#29497d",
+                  lineWidth: 15,
+                  lineCap: "round",
+                  lineJoin: "round",
+                }}
+              />
+              <LineLayer
+                // sourceID={'source' + routePolygon}
+                id="route-layer-fg"
+                style={{
+                  lineColor: "#326dd1",
+                  lineWidth: 9,
+                  lineCap: "round",
+                  lineJoin: "round",
+                }}
+              />
+            </ShapeSource>
+          </>
+        )}
+
+        {destination && (
+          <ShapeSource
+            id="unknown-point"
+            shape={{
+              type: "Feature",
+              geometry: {
+                type: "Point",
+                coordinates: destination,
+              },
+              properties: {
+                title: "Destination",
+              },
+            }}
+          >
+            <SymbolLayer
+              id="random-point-layer"
+              style={{
+                iconImage: "marker-15",
+                iconSize: 1.5,
+                textField: ["get", "title"],
+                textSize: 14,
+                textOffset: [0, -1.5],
+                textHaloColor: "white",
+                textHaloWidth: 2,
+              }}
+            />
+            <CircleLayer
+              id="random-point-layer-circle"
+              style={{
+                circleColor: "red",
+                circleRadius: 8,
+                circleOpacity: 0.8,
+                circleStrokeWidth: 2,
+                circleStrokeColor: "white",
+              }}
+            />
+          </ShapeSource>
+        )}
+      </MapView>
+      <View
+        style={{
+          position: "absolute",
+          display: "flex",
+          flexDirection: "row",
+          bottom: 0,
+          width: "100%",
+          height: 80,
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "#007AFF",
+          padding: 10,
+          borderRadius: 5,
+          zIndex: 1000,
+        }}
+      >
+        <Pressable
+          onPress={() => setFollowUserLocation(true)}
+          style={{ flexGrow: 1 }}
+        >
+          <Text style={{ color: "white", fontWeight: "bold" }}>
+            Toggle Follow User
+          </Text>
+        </Pressable>
+        <Pressable onPress={fetchNavigationRoute} style={{ flexGrow: 1 }}>
+          <Text style={{ color: "white", fontWeight: "bold" }}>
+            Fetch Route
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setFollowUserLocation(true)}
+          style={{ flexGrow: 1 }}
+        >
+          <Text style={{ color: "white", fontWeight: "bold" }}>Navigate</Text>
+        </Pressable>
+      </View>
+    </View>
   );
+}
+
+const fitFeatureBounds = (
+  feature: GeoJSON.Feature,
+  camera: CameraRef,
+  padding = 50
+) => {
+  if (!feature || !feature.geometry) {
+    console.warn("Invalid feature provided");
+    return;
+  }
+
+  // Extract coordinates based on geometry type
+  let coordinates = [];
+  switch (feature.geometry.type) {
+    case "Point":
+      coordinates = [feature.geometry.coordinates];
+      break;
+    case "LineString":
+      coordinates = feature.geometry.coordinates;
+      break;
+    case "Polygon":
+      coordinates = feature.geometry.coordinates[0];
+      break;
+    // case 'MultiPoint':
+    // case 'MultiLineString':
+    //   coordinates = feature.geometry.coordinates.flat();
+    //   break;
+    // case 'MultiPolygon':
+    //   coordinates = feature.geometry.coordinates.flat(2);
+    //   break;
+    default:
+      console.warn("Unsupported geometry type");
+      return;
+  }
+
+  // Calculate bounds
+  const bounds = coordinates.reduce(
+    (
+      acc: { north: number; south: number; east: number; west: number },
+      coord: GeoJSON.Position
+    ) => {
+      return {
+        north: Math.max(acc.north, coord[1]),
+        south: Math.min(acc.south, coord[1]),
+        east: Math.max(acc.east, coord[0]),
+        west: Math.min(acc.west, coord[0]),
+      };
+    },
+    {
+      north: -90,
+      south: 90,
+      east: -180,
+      west: 180,
+    }
+  );
+
+  camera.fitBounds(
+    [bounds.west, bounds.south],
+    [bounds.east, bounds.north],
+    // [50, 100, 300, 50], // top, right, bottom, left
+    [0, 0, 0, 0], // top, right, bottom, left
+    900 // duration in ms, 0 for immediate
+  );
+};
+
+// const fitFeatureBounds = (
+//   camera: CameraRef,
+//   coordinates: GeoJSON.Position[]
+// ) => {
+//   // Calculate bounds
+//   const bounds = coordinates.reduce(
+//     (
+//       acc: { north: number; south: number; east: number; west: number },
+//       coord: GeoJSON.Position
+//     ) => {
+//       return {
+//         north: Math.max(acc.north, coord[1]),
+//         south: Math.min(acc.south, coord[1]),
+//         east: Math.max(acc.east, coord[0]),
+//         west: Math.min(acc.west, coord[0]),
+//       };
+//     },
+//     {
+//       north: -90,
+//       south: 90,
+//       east: -180,
+//       west: 180,
+//     }
+//   );
+
+//   camera.fitBounds(
+//     [bounds.west, bounds.south],
+//     [bounds.east, bounds.north],
+//     [100, 100, 100, 100], // top, right, bottom, left
+//     500 // duration in ms, 0 for immediate
+//   );
+// };
+
+export async function getRouteFor(
+  start: [number, number],
+  end: [number, number],
+  costing: "auto" | "pedestrian" = "auto"
+) {
+  const result = await axios.post("https://valhalla1.openstreetmap.de/route", {
+    locations: [
+      {
+        lon: start[0],
+        lat: start[1],
+      },
+      {
+        lon: end[0],
+        lat: end[1],
+      },
+    ],
+    costing,
+    units: "km",
+    format: "osrm",
+  });
+  if (result.status === 200) {
+    return result.data;
+  }
+  return null;
 }
