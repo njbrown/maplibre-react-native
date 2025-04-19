@@ -19,6 +19,16 @@ import * as Location from "expo-location";
 import axios from "axios";
 import polyLib from "@mapbox/polyline";
 
+/*
+INSTRUCTIONS:
+1. Long press on the map to set a destination point.
+2. Press "Fetch Route" to get the route from the current location to the destination.
+3. Press "Navigate" to start navigation.
+
+
+
+*/
+
 export function BugReport() {
   const camRef = useRef<CameraRef | null>(null);
   const [followUserLocation, setFollowUserLocation] = useState(true);
@@ -41,51 +51,29 @@ export function BugReport() {
   const [locationProps, setLocationProps] = useState<any>({
     renderMode: "native",
   });
-  const [location, setLocation] = useState<any>();
-
-  useEffect(() => {
-    // use two known locations here
-    const start = [];
-    // const stop = [];
-  }, []);
 
   const fetchNavigationRoute = async () => {
     try {
-      // const start = await getCurrentLocation();try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
         console.log("Permission to access location was denied");
         return;
       }
-
-      // const position = await Location.getCurrentPositionAsync({
-      //   accuracy: Location.Accuracy.BestForNavigation,
-      // });
       const position = await Location.getLastKnownPositionAsync();
       if (position && destination) {
-        // camRef.current?.setCamera({
-        //   centerCoordinate: [
-        //     position.coords.longitude,
-        //     position.coords.latitude,
-        //   ],
-        //   zoomLevel: 18,
-        //   animationDuration: 500,
-        // });
-        // fetch navigation from ferrostar
-        console.log(position);
         const userLocation = [
           position.coords.longitude,
           position.coords.latitude,
         ] satisfies [number, number];
+
         console.log("FETCHING ROUTE");
         const res = await getRouteFor(userLocation, destination!, "auto");
 
         const route = res.routes[0];
-        // console.log(JSON.stringify(route, null, '  '));
+
         const geom = route.geometry;
         if (!geom) return;
 
-        // console.log(geom);
         const decoded = polyLib.decode(geom).map<[number, number]>((x) => {
           return [x[0] / 10, x[1] / 10];
         });
@@ -112,8 +100,8 @@ export function BugReport() {
             ne: [bounds.east, bounds.north],
           });
 
-          // const screenHeightPx = PixelRatio.getPixelSizeForLayoutSize(screenHeight);
-
+          // A bottom padding is set to show the route above the bottom bar (in the actual app)
+          // I added it here because it highlights the issue of the camera padding not updating
           setCameraPadding({
             paddingBottom: 500,
             paddingTop: 50,
@@ -137,7 +125,9 @@ export function BugReport() {
 
     const screenWidthPx = PixelRatio.getPixelSizeForLayoutSize(screenWidth);
     const screenHeightPx = PixelRatio.getPixelSizeForLayoutSize(screenHeight);
-    // console.log({ screenWidthPx, screenHeightPx });
+
+    // This should push the camera up so the UserLocation puck is closer to the bottom of the screen
+    // but it doesn't work after the padding has been set in the fetchNavigationRoute function
     const padding = {
       paddingLeft: 0.0 * screenWidthPx,
       paddingTop: 0.5 * screenHeightPx,
@@ -148,6 +138,7 @@ export function BugReport() {
 
     setFollowProps({
       zoom: 16,
+      follorZoomLevel: 16,
       pitch: 45,
       animationDuration: 900,
     });
@@ -192,6 +183,7 @@ export function BugReport() {
           <RasterLayer id="basemap" />
         </RasterSource>
         <Camera
+          zoomLevel={16}
           followUserLocation={followUserLocation}
           followUserMode={followUserMode}
           onUserTrackingModeChange={(event) => {
@@ -297,6 +289,9 @@ export function BugReport() {
         <Pressable
           onPress={() => setFollowUserLocation(true)}
           style={{ flexGrow: 1 }}
+          android_ripple={{
+            color: "white",
+          }}
         >
           <Text style={{ color: "white", fontWeight: "bold" }}>
             Toggle Follow User
@@ -314,38 +309,6 @@ export function BugReport() {
     </View>
   );
 }
-// const fitFeatureBounds = (
-//   camera: CameraRef,
-//   coordinates: GeoJSON.Position[]
-// ) => {
-//   // Calculate bounds
-//   const bounds = coordinates.reduce(
-//     (
-//       acc: { north: number; south: number; east: number; west: number },
-//       coord: GeoJSON.Position
-//     ) => {
-//       return {
-//         north: Math.max(acc.north, coord[1]),
-//         south: Math.min(acc.south, coord[1]),
-//         east: Math.max(acc.east, coord[0]),
-//         west: Math.min(acc.west, coord[0]),
-//       };
-//     },
-//     {
-//       north: -90,
-//       south: 90,
-//       east: -180,
-//       west: 180,
-//     }
-//   );
-
-//   camera.fitBounds(
-//     [bounds.west, bounds.south],
-//     [bounds.east, bounds.north],
-//     [100, 100, 100, 100], // top, right, bottom, left
-//     500 // duration in ms, 0 for immediate
-//   );
-// };
 
 export async function getRouteFor(
   start: [number, number],
