@@ -9,11 +9,12 @@ import {
   SymbolLayer,
   UserLocation,
   UserTrackingMode,
+  type CameraPadding,
   type CameraRef,
 } from "@maplibre/maplibre-react-native";
 import type { Position } from "geojson";
 import { useEffect, useRef, useState } from "react";
-import { Text, Pressable, View } from "react-native";
+import { Text, Pressable, View, PixelRatio, Dimensions } from "react-native";
 import * as Location from "expo-location";
 import axios from "axios";
 import polyLib from "@mapbox/polyline";
@@ -23,6 +24,23 @@ export function BugReport() {
   const [followUserLocation, setFollowUserLocation] = useState(true);
   const [routePolygon, setRoutePolygon] = useState<any>(null);
   const [destination, setDestinationPoint] = useState<Position | null>(null);
+  const [followUserMode, setFollowUserMode] = useState<UserTrackingMode>(
+    UserTrackingMode.Follow
+  );
+  const [cameraPadding, setCameraPadding] = useState<CameraPadding | undefined>(
+    undefined
+  );
+  const [cameraBounds, setCameraBounds] = useState<
+    | {
+        ne: [number, number];
+        sw: [number, number];
+      }
+    | undefined
+  >(undefined);
+  const [followProps, setFollowProps] = useState<any | undefined>(undefined);
+  const [locationProps, setLocationProps] = useState<any>({
+    renderMode: "native",
+  });
   const [location, setLocation] = useState<any>();
 
   useEffect(() => {
@@ -83,12 +101,62 @@ export function BugReport() {
         } satisfies GeoJSON.Feature;
         setRoutePolygon(LineString);
 
+        // disable user location tracking
+        setFollowUserLocation(false);
+
         // zoom to location
-        fitFeatureBounds(LineString, camRef.current!);
+        const bounds = getFeatureBounds(LineString);
+        if (bounds) {
+          setCameraBounds({
+            sw: [bounds.west, bounds.south],
+            ne: [bounds.east, bounds.north],
+          });
+
+          // const screenHeightPx = PixelRatio.getPixelSizeForLayoutSize(screenHeight);
+
+          setCameraPadding({
+            paddingBottom: 500,
+            paddingTop: 50,
+            paddingLeft: 30,
+            paddingRight: 100,
+          });
+        }
       }
     } catch (error) {
       console.error("Error getting location:", error);
     }
+  };
+
+  const startNavigation = async () => {
+    // update ui
+    setFollowUserLocation(true);
+    setFollowUserMode(UserTrackingMode.FollowWithCourse);
+
+    const { height: screenHeight, width: screenWidth } =
+      Dimensions.get("screen");
+
+    const screenWidthPx = PixelRatio.getPixelSizeForLayoutSize(screenWidth);
+    const screenHeightPx = PixelRatio.getPixelSizeForLayoutSize(screenHeight);
+    // console.log({ screenWidthPx, screenHeightPx });
+    const padding = {
+      paddingLeft: 0.0 * screenWidthPx,
+      paddingTop: 0.5 * screenHeightPx,
+      paddingRight: 0.0 * screenWidthPx,
+      paddingBottom: 0.0 * screenHeightPx,
+    };
+    setCameraPadding(padding);
+
+    setFollowProps({
+      zoom: 16,
+      pitch: 45,
+      animationDuration: 900,
+    });
+
+    setLocationProps({
+      renderMode: "native",
+      androidRenderMode: "gps",
+      animated: true,
+    });
   };
 
   return (
@@ -105,20 +173,9 @@ export function BugReport() {
         onLongPress={(event) => {
           // Get coordinates from the long press event
           const { coordinates } = event.geometry;
-          console.log("Map long pressed at:", coordinates);
+          // console.log("Map long pressed at:", coordinates);
 
           setDestinationPoint(coordinates);
-
-          // camRef.current?.fitBounds(
-          //   [coordinates[0] - 0.01, coordinates[1] - 0.01],
-          //   [coordinates[0] + 0.01, coordinates[1] + 0.01],
-          //   [100, 100, 100, 100], // top, right, bottom, left
-          //   500 // duration in ms, 0 for immediate
-          // );
-
-          // fit bounds to the coordinates
-
-          // fitFeatureBounds(camRef.current!, [location, coordinates]);
         }}
       >
         <RasterSource
@@ -132,26 +189,24 @@ export function BugReport() {
           minZoomLevel={0}
           maxZoomLevel={24}
         >
-          <RasterLayer
-            id="basemap"
-            // style={{
-            //   visibility: showSatelliteLayer ? 'visible' : 'none',
-            // }}
-          />
+          <RasterLayer id="basemap" />
         </RasterSource>
         <Camera
-          ref={camRef}
           followUserLocation={followUserLocation}
-          // followUserMode={UserTrackingMode.Follow}
+          followUserMode={followUserMode}
           onUserTrackingModeChange={(event) => {
-            console.log(JSON.stringify(event.nativeEvent.payload));
-
             if (!event.nativeEvent.payload.followUserLocation) {
               setFollowUserLocation(false);
+              setCameraBounds(undefined);
+              setCameraPadding(undefined);
             }
           }}
+          padding={cameraPadding}
+          bounds={cameraBounds}
+          {...followProps}
+          animationDuration={500}
         />
-        <UserLocation renderMode="native" />
+        <UserLocation {...locationProps} />
 
         {routePolygon && (
           <>
@@ -252,81 +307,13 @@ export function BugReport() {
             Fetch Route
           </Text>
         </Pressable>
-        <Pressable
-          onPress={() => setFollowUserLocation(true)}
-          style={{ flexGrow: 1 }}
-        >
+        <Pressable onPress={startNavigation} style={{ flexGrow: 1 }}>
           <Text style={{ color: "white", fontWeight: "bold" }}>Navigate</Text>
         </Pressable>
       </View>
     </View>
   );
 }
-
-const fitFeatureBounds = (
-  feature: GeoJSON.Feature,
-  camera: CameraRef,
-  padding = 50
-) => {
-  if (!feature || !feature.geometry) {
-    console.warn("Invalid feature provided");
-    return;
-  }
-
-  // Extract coordinates based on geometry type
-  let coordinates = [];
-  switch (feature.geometry.type) {
-    case "Point":
-      coordinates = [feature.geometry.coordinates];
-      break;
-    case "LineString":
-      coordinates = feature.geometry.coordinates;
-      break;
-    case "Polygon":
-      coordinates = feature.geometry.coordinates[0];
-      break;
-    // case 'MultiPoint':
-    // case 'MultiLineString':
-    //   coordinates = feature.geometry.coordinates.flat();
-    //   break;
-    // case 'MultiPolygon':
-    //   coordinates = feature.geometry.coordinates.flat(2);
-    //   break;
-    default:
-      console.warn("Unsupported geometry type");
-      return;
-  }
-
-  // Calculate bounds
-  const bounds = coordinates.reduce(
-    (
-      acc: { north: number; south: number; east: number; west: number },
-      coord: GeoJSON.Position
-    ) => {
-      return {
-        north: Math.max(acc.north, coord[1]),
-        south: Math.min(acc.south, coord[1]),
-        east: Math.max(acc.east, coord[0]),
-        west: Math.min(acc.west, coord[0]),
-      };
-    },
-    {
-      north: -90,
-      south: 90,
-      east: -180,
-      west: 180,
-    }
-  );
-
-  camera.fitBounds(
-    [bounds.west, bounds.south],
-    [bounds.east, bounds.north],
-    // [50, 100, 300, 50], // top, right, bottom, left
-    [0, 0, 0, 0], // top, right, bottom, left
-    900 // duration in ms, 0 for immediate
-  );
-};
-
 // const fitFeatureBounds = (
 //   camera: CameraRef,
 //   coordinates: GeoJSON.Position[]
@@ -385,3 +372,58 @@ export async function getRouteFor(
   }
   return null;
 }
+
+const getFeatureBounds = (feature: GeoJSON.Feature) => {
+  // console.log('FITTING BOUNDS');
+  if (!feature || !feature.geometry) {
+    console.warn("Invalid feature provided");
+    return;
+  }
+
+  // Extract coordinates based on geometry type
+  let coordinates = [];
+  switch (feature.geometry.type) {
+    case "Point":
+      coordinates = [feature.geometry.coordinates];
+      break;
+    case "LineString":
+      coordinates = feature.geometry.coordinates;
+      break;
+    case "Polygon":
+      coordinates = feature.geometry.coordinates[0];
+      break;
+    // case 'MultiPoint':
+    // case 'MultiLineString':
+    //   coordinates = feature.geometry.coordinates.flat();
+    //   break;
+    // case 'MultiPolygon':
+    //   coordinates = feature.geometry.coordinates.flat(2);
+    //   break;
+    default:
+      console.warn("Unsupported geometry type");
+      return;
+  }
+
+  // Calculate bounds
+  const bounds = coordinates.reduce(
+    (
+      acc: { north: number; south: number; east: number; west: number },
+      coord: GeoJSON.Position
+    ) => {
+      return {
+        north: Math.max(acc.north, coord[1]),
+        south: Math.min(acc.south, coord[1]),
+        east: Math.max(acc.east, coord[0]),
+        west: Math.min(acc.west, coord[0]),
+      };
+    },
+    {
+      north: -90,
+      south: 90,
+      east: -180,
+      west: 180,
+    }
+  );
+
+  return bounds;
+};
