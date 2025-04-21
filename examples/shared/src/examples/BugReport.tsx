@@ -29,9 +29,13 @@ INSTRUCTIONS:
 
 */
 
+const MINIMUM_POSITION_DIFFERENCE = 0.000001; // ~ 11.1cm accuracy
+
 export function BugReport() {
   const camRef = useRef<CameraRef | null>(null);
-  const [followUserLocation, setFollowUserLocation] = useState(true);
+  const [followUserLocation, setFollowUserLocation] = useState<
+    boolean | undefined
+  >(true);
   const [routePolygon, setRoutePolygon] = useState<any>(null);
   const [destination, setDestinationPoint] = useState<Position | null>(null);
   const [followUserMode, setFollowUserMode] = useState<UserTrackingMode>(
@@ -51,6 +55,41 @@ export function BugReport() {
   const [locationProps, setLocationProps] = useState<any>({
     renderMode: "native",
   });
+  const [lastMapCenter, setLastMapCenter] =
+    useState<GeoJSON.Position>(undefined);
+
+  const activateDeviceTracking = () => {
+    setFollowUserLocation(true);
+  };
+
+  const deactivateDeviceTracking = () => {
+    setFollowUserLocation(undefined);
+  };
+
+  const isMapCenterChanged = (currentMapCenter: GeoJSON.Position): boolean => {
+    if (lastMapCenter === undefined) return true;
+    const longitudeDistance = Math.abs(currentMapCenter[0] - lastMapCenter[0]);
+    if (longitudeDistance > MINIMUM_POSITION_DIFFERENCE) return true;
+    const latitudeDistance = Math.abs(currentMapCenter[1] - lastMapCenter[1]);
+    if (latitudeDistance > MINIMUM_POSITION_DIFFERENCE) return true;
+    return false;
+  };
+
+  const handleRegionDidChange = (
+    regionPayload: GeoJSON.Feature<GeoJSON.Point, RegionPayload>
+  ) => {
+    if (
+      regionPayload !== undefined &&
+      regionPayload.properties.isUserInteraction === false
+    ) {
+      // Automatic map movement detected
+      if (isMapCenterChanged(regionPayload.geometry.coordinates)) {
+        // Map pan movement detected
+        setLastMapCenter(regionPayload.geometry.coordinates);
+        deactivateDeviceTracking();
+      }
+    }
+  };
 
   const fetchNavigationRoute = async () => {
     try {
@@ -90,7 +129,7 @@ export function BugReport() {
         setRoutePolygon(LineString);
 
         // disable user location tracking
-        setFollowUserLocation(false);
+        setFollowUserLocation(undefined);
 
         // zoom to location
         const bounds = getFeatureBounds(LineString);
@@ -168,6 +207,7 @@ export function BugReport() {
 
           setDestinationPoint(coordinates);
         }}
+        onRegionDidChange={handleRegionDidChange}
       >
         <RasterSource
           id="basemap"
@@ -183,16 +223,17 @@ export function BugReport() {
           <RasterLayer id="basemap" />
         </RasterSource>
         <Camera
+          animationMode={"flyTo"}
           zoomLevel={16}
           followUserLocation={followUserLocation}
           followUserMode={followUserMode}
-          onUserTrackingModeChange={(event) => {
-            if (!event.nativeEvent.payload.followUserLocation) {
-              setFollowUserLocation(false);
-              setCameraBounds(undefined);
-              setCameraPadding(undefined);
-            }
-          }}
+          // onUserTrackingModeChange={(event) => {
+          //   if (!event.nativeEvent.payload.followUserLocation) {
+          //     setFollowUserLocation(false);
+          //     setCameraBounds(undefined);
+          //     setCameraPadding(undefined);
+          //   }
+          // }}
           padding={cameraPadding}
           bounds={cameraBounds}
           {...followProps}
@@ -277,18 +318,19 @@ export function BugReport() {
           flexDirection: "row",
           bottom: 0,
           width: "100%",
-          height: 80,
           justifyContent: "center",
           alignItems: "center",
           backgroundColor: "#007AFF",
-          padding: 10,
+
           borderRadius: 5,
           zIndex: 1000,
         }}
       >
         <Pressable
-          onPress={() => setFollowUserLocation(true)}
-          style={{ flexGrow: 1 }}
+          onPress={() =>
+            setFollowUserLocation(followUserLocation ? undefined : true)
+          }
+          style={{ flexGrow: 1, display: "flex", padding: 20 }}
           android_ripple={{
             color: "white",
           }}
@@ -297,12 +339,24 @@ export function BugReport() {
             Toggle Follow User
           </Text>
         </Pressable>
-        <Pressable onPress={fetchNavigationRoute} style={{ flexGrow: 1 }}>
+        <Pressable
+          onPress={fetchNavigationRoute}
+          style={{ flexGrow: 1, display: "flex", padding: 20 }}
+          android_ripple={{
+            color: "white",
+          }}
+        >
           <Text style={{ color: "white", fontWeight: "bold" }}>
             Fetch Route
           </Text>
         </Pressable>
-        <Pressable onPress={startNavigation} style={{ flexGrow: 1 }}>
+        <Pressable
+          onPress={startNavigation}
+          style={{ flexGrow: 1, display: "flex", padding: 20 }}
+          android_ripple={{
+            color: "white",
+          }}
+        >
           <Text style={{ color: "white", fontWeight: "bold" }}>Navigate</Text>
         </Pressable>
       </View>
